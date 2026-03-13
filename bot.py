@@ -1,30 +1,13 @@
 import os
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import time
-import threading
+import os
 
 # Replace these with your actual credentials or use environment variables
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8699325575:AAHotYf2PFRS9UVZLWfQPdZXWrcpWAiSaYw")
 
 # Initialize the bot
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# Time in seconds to delete alert messages (e.g. 180 = 3 minutes)
-DELETE_TIMEOUT = 180
-
-def delete_later(chat_id, message_id):
-    """Wait for DELETE_TIMEOUT seconds, then try to delete the message via background ping"""
-    time.sleep(DELETE_TIMEOUT)
-    try:
-        bot.delete_message(chat_id, message_id)
-    except Exception as e:
-        print(f"Could not delayed delete message {message_id}: {e}")
-
-def schedule_delete(chat_id, message_id):
-    """Schedules the delete_later function in a separate thread so it doesn't block."""
-    t = threading.Thread(target=delete_later, args=(chat_id, message_id), daemon=True)
-    t.start()
 
 def is_group(message):
     return message.chat.type in ['group', 'supergroup']
@@ -82,8 +65,7 @@ def group_commands(message):
     command = message.text.split()[0][1:].split('@')[0]
     
     if command == 'start':
-        reply = bot.reply_to(message, "ទាញអញចូល group gg ចាំអញលុប links story forward គេអោយតែដាក់អញ admin ផង☺️🖕")
-        schedule_delete(reply.chat.id, reply.message_id)
+        bot.reply_to(message, "ទាញអញចូល group gg ចាំអញលុប links story forward គេអោយតែដាក់អញ admin ផង☺️🖕")
         return
         
     text = (
@@ -93,8 +75,7 @@ def group_commands(message):
         "✅ /forward - Delete forwards status\n"
         "✅ /filters - Show this menu"
     )
-    reply = bot.reply_to(message, text)
-    schedule_delete(reply.chat.id, reply.message_id)
+    bot.reply_to(message, text)
 
 @bot.message_handler(content_types=['new_chat_members'])
 def welcome_new_bot(message):
@@ -108,13 +89,12 @@ def welcome_new_bot(message):
             )
             markup.add(button)
             
-            reply = bot.send_message(
+            bot.send_message(
                 message.chat.id,
                 "សួស្តី! អរគុណដែលបានទាញខ្ញុំចូល group។\n"
                 "សូមកុំភ្លេច Promote ខ្ញុំជា Admin ដើម្បីអោយខ្ញុំអាចលុប links, story, និង forward បាន!",
                 reply_markup=markup
             )
-            schedule_delete(reply.chat.id, reply.message_id)
             break
 
 # Handler for all messages in groups to check for links/forwards/stories AND MENTIONS
@@ -137,9 +117,6 @@ def check_messages(message):
                 username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
                 reply_text = f"{username}អត់ការងារធ្វើមែនបានចេះតែ share ចូល group គេហ្នឹង។☺️🖕"
                 reply = bot.send_message(message.chat.id, reply_text)
-                
-                # Delete the insult message dynamically 3 minutes later
-                schedule_delete(reply.chat.id, reply.message_id)
                 return # Stop processing this message since it was deleted
                 
         except Exception as e:
@@ -152,9 +129,7 @@ def check_messages(message):
             # Send an alert notification tag
             alert_text = f"🔔 {username} You have been mentioned in this chat by {message.from_user.first_name}!"
             try:
-                alert_msg = bot.send_message(message.chat.id, alert_text, reply_to_message_id=message.message_id)
-                # Auto delete the notification after 3 minutes (180 seconds)
-                schedule_delete(alert_msg.chat.id, alert_msg.message_id)
+                bot.send_message(message.chat.id, alert_text, reply_to_message_id=message.message_id)
             except Exception as e:
                 print(f"Could not send mention alert: {e}")
 
