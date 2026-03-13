@@ -15,28 +15,51 @@ def is_group(message):
 def is_private(message):
     return message.chat.type == 'private'
 
+# In-memory settings for Vercel (Note: This will reset on Vercel cold starts)
+# Format: { chat_id: {"link": True, "story": True, "forward": True} }
+# True means "deletion is ACTIVE" (users cannot send them).
+group_settings = {}
+
+def get_setting(chat_id, feature):
+    if chat_id not in group_settings:
+        return True # default to deleting everything
+    return group_settings[chat_id].get(feature, True)
+
+def set_setting(chat_id, feature, value):
+    if chat_id not in group_settings:
+        group_settings[chat_id] = {"link": True, "story": True, "forward": True}
+    if feature == "all":
+        group_settings[chat_id] = {"link": value, "story": value, "forward": value}
+    else:
+        group_settings[chat_id][feature] = value
+
 def has_unwanted_content(message):
-    # Check for forwards
-    if hasattr(message, 'forward_date') and message.forward_date is not None:
-        return True
-    if hasattr(message, 'json') and message.json and message.json.get('forward_origin'):
-        return True
+    chat_id = message.chat.id
     
-    # Check for story (Telebot might not fully support this natively yet, but we check if attribute exists)
-    if hasattr(message, "story") and message.story is not None:
-        return True
-    if hasattr(message, 'json') and message.json and message.json.get('story'):
-        return True
+    # Check for forwards
+    if get_setting(chat_id, "forward"):
+        if hasattr(message, 'forward_date') and message.forward_date is not None:
+            return True
+        if hasattr(message, 'json') and message.json and message.json.get('forward_origin'):
+            return True
+    
+    # Check for story
+    if get_setting(chat_id, "story"):
+        if hasattr(message, "story") and message.story is not None:
+            return True
+        if hasattr(message, 'json') and message.json and message.json.get('story'):
+            return True
 
     # Check for links in text and caption
-    entities = message.entities or []
-    caption_entities = message.caption_entities or []
-    all_entities = entities + caption_entities
-    
-    for entity in all_entities:
-        if entity.type in ['url', 'text_link']:
-            return True
-            
+    if get_setting(chat_id, "link"):
+        entities = message.entities or []
+        caption_entities = message.caption_entities or []
+        all_entities = entities + caption_entities
+        
+        for entity in all_entities:
+            if entity.type in ['url', 'text_link']:
+                return True
+                
     return False
 
 def get_mentions(message):
@@ -58,6 +81,32 @@ def get_mentions(message):
 @bot.message_handler(commands=['start'], func=is_private)
 def start_private(message):
     bot.reply_to(message, "ទាញអញចូល group gg ចាំអញលុប links story forward គេអោយតែដាក់អញ admin ផង☺️🖕")
+
+@bot.message_handler(commands=['disablelink', 'disablestory', 'disableforward', 'enableall'], func=is_group)
+def group_filters_setup(message):
+    # Check admin
+    try:
+        chat_member = bot.get_chat_member(message.chat.id, message.from_user.id)
+        if chat_member.status not in ['administrator', 'creator']:
+            bot.reply_to(message, "Only admins can change these settings.")
+            return
+    except Exception:
+        pass # Ignore failure to check (might not be admin)
+
+    command = message.text.split()[0][1:].split('@')[0].lower()
+    
+    if command == 'disablelink':
+        set_setting(message.chat.id, 'link', True)
+        bot.reply_to(message, "✅ Links disabled (Bot will delete links).")
+    elif command == 'disablestory':
+        set_setting(message.chat.id, 'story', True)
+        bot.reply_to(message, "✅ Stories disabled (Bot will delete stories).")
+    elif command == 'disableforward':
+        set_setting(message.chat.id, 'forward', True)
+        bot.reply_to(message, "✅ Forwards disabled (Bot will delete forwards).")
+    elif command == 'enableall':
+        set_setting(message.chat.id, 'all', False)
+        bot.reply_to(message, "✅ All features enabled (Users can send anything).")
 
 @bot.message_handler(commands=['start', 'links', 'story', 'forward', 'filters'], func=is_group)
 def group_commands(message):
