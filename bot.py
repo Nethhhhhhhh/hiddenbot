@@ -1,45 +1,89 @@
-from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 import os
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import time
+import threading
 
 # Replace these with your actual credentials or use environment variables
-API_ID = os.environ.get("API_ID", 32547622)
-API_HASH = os.environ.get("API_HASH", "f00c0be12c0278e4d1211d062f4e4804")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8699325575:AAHotYf2PFRS9UVZLWfQPdZXWrcpWAiSaYw")
 
-# Make sure the session file is saved exactly where this script is located
-script_dir = os.path.dirname(os.path.abspath(__file__))
-app = Client("mikita", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workdir=script_dir)
+# Initialize the bot
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# Custom filter for stories since filters.story might not be available
-is_story = filters.create(lambda _, __, message: bool(getattr(message, "story", None)))
+# Time in seconds to delete alert messages (e.g. 180 = 3 minutes)
+DELETE_TIMEOUT = 180
 
-def check_has_link(_, __, message: Message):
-    entities = message.entities or message.caption_entities or []
-    for entity in entities:
-        # Check both Pyrogram 1.x (str) and 2.x (Enum)
-        type_str = getattr(entity.type, "name", str(entity.type)).upper()
-        if type_str in ["URL", "TEXT_LINK", "MESSAGEENTITYTYPE.URL", "MESSAGEENTITYTYPE.TEXT_LINK"]:
+def delete_later(chat_id, message_id):
+    """Wait for DELETE_TIMEOUT seconds, then try to delete the message via background ping"""
+    time.sleep(DELETE_TIMEOUT)
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        print(f"Could not delayed delete message {message_id}: {e}")
+
+def schedule_delete(chat_id, message_id):
+    """Schedules the delete_later function in a separate thread so it doesn't block."""
+    t = threading.Thread(target=delete_later, args=(chat_id, message_id), daemon=True)
+    t.start()
+
+def is_group(message):
+    return message.chat.type in ['group', 'supergroup']
+
+def is_private(message):
+    return message.chat.type == 'private'
+
+def has_unwanted_content(message):
+    # Check for forwards
+    if hasattr(message, 'forward_date') and message.forward_date is not None:
+        return True
+    if hasattr(message, 'json') and message.json and message.json.get('forward_origin'):
+        return True
+    
+    # Check for story (Telebot might not fully support this natively yet, but we check if attribute exists)
+    if hasattr(message, "story") and message.story is not None:
+        return True
+    if hasattr(message, 'json') and message.json and message.json.get('story'):
+        return True
+
+    # Check for links in text and caption
+    entities = message.entities or []
+    caption_entities = message.caption_entities or []
+    all_entities = entities + caption_entities
+    
+    for entity in all_entities:
+        if entity.type in ['url', 'text_link']:
             return True
+            
     return False
 
-has_link = filters.create(check_has_link)
+def get_mentions(message):
+    """Extracts all mentioned usernames from the message"""
+    mentions = []
+    entities = message.entities or []
+    caption_entities = message.caption_entities or []
+    all_entities = entities + caption_entities
+    
+    for entity in all_entities:
+        if entity.type == 'mention':
+            # Extract the mentioned username
+            text_to_parse = message.text if message.text else message.caption
+            if text_to_parse:
+                mention = text_to_parse[entity.offset:entity.offset + entity.length]
+                mentions.append(mention)
+    return mentions
 
-# Filter for links, forwards (shares), and stories
-unwanted_filters = filters.group & (
-    filters.forwarded | 
-    is_story | 
-    has_link
-)
+@bot.message_handler(commands=['start'], func=is_private)
+def start_private(message):
+    bot.reply_to(message, "ទាញអញចូល group gg ចាំអញលុប links story forward គេអោយតែដាក់អញ admin ផង☺️🖕")
 
-@app.on_message(filters.command("start") & filters.private)
-async def start_command(client: Client, message: Message):
-    await message.reply_text("ទាញអញចូល group gg ចាំអញលុប links story forward គេអោយតែដាក់អញ admin ផង☺️🖕")
-
-@app.on_message(filters.command(["start", "links", "story", "forward", "filters"]) & filters.group)
-async def group_commands_handler(client: Client, message: Message):
-    if message.command[0] == "start":
-        await message.reply_text("ទាញអញចូល group gg ចាំអញលុប links story forward គេអោយតែដាក់អញ admin ផង☺️🖕")
+@bot.message_handler(commands=['start', 'links', 'story', 'forward', 'filters'], func=is_group)
+def group_commands(message):
+    # Extract command part (e.g., '/start@botusername' -> 'start')
+    command = message.text.split()[0][1:].split('@')[0]
+    
+    if command == 'start':
+        reply = bot.reply_to(message, "ទាញអញចូល group gg ចាំអញលុប links story forward គេអោយតែដាក់អញ admin ផង☺️🖕")
+        schedule_delete(reply.chat.id, reply.message_id)
         return
         
     text = (
@@ -49,44 +93,79 @@ async def group_commands_handler(client: Client, message: Message):
         "✅ /forward - Delete forwards status\n"
         "✅ /filters - Show this menu"
     )
-    await message.reply_text(text)
+    reply = bot.reply_to(message, text)
+    schedule_delete(reply.chat.id, reply.message_id)
 
-@app.on_message(unwanted_filters)
-async def delete_unwanted_messages(client: Client, message: Message):
-    # Optionally, we can check if the user is an administrator and skip deleting their messages
-    if message.from_user:
-        chat_member = await client.get_chat_member(message.chat.id, message.from_user.id)
-        if chat_member.privileges:
-            # User has admin privileges, do not delete their messages
-            return
-            
-    try:
-        await message.delete()
-        if message.from_user:
-            username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
-            reply_text = f"{username}អត់ការងារធ្វើមែនបានចេះតែ share ចូល group គេហ្នឹង។☺️🖕"
-            await client.send_message(message.chat.id, reply_text)
-    except Exception as e:
-        print(f"Could not delete message in {message.chat.id}: {e}")
-
-@app.on_message(filters.new_chat_members)
-async def welcome_bot(client: Client, message: Message):
+@bot.message_handler(content_types=['new_chat_members'])
+def welcome_new_bot(message):
+    me = bot.get_me()
     for member in message.new_chat_members:
-        if member.is_self:
-            # Bot was added to a group. Find out its username using get_me
-            me = await client.get_me()
-            button = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Promote to Admin 👮‍♂️", url=f"https://t.me/{me.username}?startgroup=true&admin=delete_messages+restrict_members")]
-            ])
-            await message.reply_text(
+        if member.id == me.id:
+            markup = InlineKeyboardMarkup()
+            button = InlineKeyboardButton(
+                "Promote to Admin 👮‍♂️", 
+                url=f"https://t.me/{me.username}?startgroup=true&admin=delete_messages+restrict_members"
+            )
+            markup.add(button)
+            
+            reply = bot.send_message(
+                message.chat.id,
                 "សួស្តី! អរគុណដែលបានទាញខ្ញុំចូល group។\n"
                 "សូមកុំភ្លេច Promote ខ្ញុំជា Admin ដើម្បីអោយខ្ញុំអាចលុប links, story, និង forward បាន!",
-                reply_markup=button
+                reply_markup=markup
             )
+            schedule_delete(reply.chat.id, reply.message_id)
             break
 
+# Handler for all messages in groups to check for links/forwards/stories AND MENTIONS
+@bot.message_handler(func=is_group, content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'animation', 'sticker', 'story', 'location'])
+def check_messages(message):
+    # 1. Check for unwanted content (links, forwards, stories)
+    if has_unwanted_content(message):
+        # Check if user is an administrator
+        if message.from_user:
+            try:
+                chat_member = bot.get_chat_member(message.chat.id, message.from_user.id)
+                if chat_member.status in ['administrator', 'creator']:
+                    return  # User is admin, do not delete their messages
+            except Exception as e:
+                pass # Safe check gracefully skipped
+                
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            if message.from_user:
+                username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+                reply_text = f"{username}អត់ការងារធ្វើមែនបានចេះតែ share ចូល group គេហ្នឹង។☺️🖕"
+                reply = bot.send_message(message.chat.id, reply_text)
+                
+                # Delete the insult message dynamically 3 minutes later
+                schedule_delete(reply.chat.id, reply.message_id)
+                return # Stop processing this message since it was deleted
+                
+        except Exception as e:
+            print(f"Could not delete message in group: {e}")
+            
+    # 2. Check for mentions (if the message wasn't deleted above)
+    mentions = get_mentions(message)
+    if mentions:
+        for username in mentions:
+            # Send an alert notification tag
+            alert_text = f"🔔 {username} You have been mentioned in this chat by {message.from_user.first_name}!"
+            try:
+                alert_msg = bot.send_message(message.chat.id, alert_text, reply_to_message_id=message.message_id)
+                # Auto delete the notification after 3 minutes (180 seconds)
+                schedule_delete(alert_msg.chat.id, alert_msg.message_id)
+            except Exception as e:
+                print(f"Could not send mention alert: {e}")
+
 if __name__ == "__main__":
-    print("Group Guardian Bot is running...")
-    print("To auto-prompt users to add this bot as an admin, give them this link:")
-    print("https://t.me/hiddenmikitabot?startgroup=true&admin=delete_messages+restrict_members")
-    app.run()
+    try:
+        me = bot.get_me()
+        print("Group Guardian Bot is running locally (pyTelegramBotAPI)...")
+        print("To auto-prompt users to add this bot as an admin, give them this link:")
+        print(f"https://t.me/{me.username}?startgroup=true&admin=delete_messages+restrict_members")
+        # Start polling (only runs when executed directly, not when imported by Vercel)
+        bot.remove_webhook()
+        bot.infinity_polling()
+    except Exception as e:
+        print(f"Failed to start bot: {e}")
