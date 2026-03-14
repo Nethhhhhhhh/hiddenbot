@@ -3,8 +3,7 @@ import sys
 import telebot
 from flask import Flask, request, jsonify
 
-# Add the parent directory to sys.path so we can import bot.py
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 # Import the bot instance and handlers from bot.py
 from bot import bot
