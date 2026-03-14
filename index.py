@@ -7,7 +7,7 @@ from bot import bot
 app = Flask(__name__)
 
 # The secret token from environment variables
-BOT_TOKEN = os.environ.get("TOKEN")
+BOT_TOKEN = os.environ.get("8699325575:AAHotYf2PFRS9UVZLWfQPdZXWrcpWAiSaYw")
 
 @app.route('/', methods=['GET'])
 def index():
